@@ -27,7 +27,7 @@ startet murml. Beim ersten Lauf wird einmalig das Whisper-Modell geladen
 ## Berechtigungen
 
 In **Systemeinstellungen → Datenschutz & Sicherheit** muss der Prozess, der
-`run.sh` startet (Terminal.app, iTerm, Cursor), folgende Rechte haben:
+`run.sh` startet (Terminal.app, iTerm, …), folgende Rechte haben:
 
 - **Eingabeüberwachung** — globaler Hotkey
 - **Bedienungshilfen** — Cmd+V senden, Emoji-Picker öffnen

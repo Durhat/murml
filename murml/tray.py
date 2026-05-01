@@ -25,6 +25,7 @@ from .engine import (
 )
 from .history import History
 from .hotkey import build_hotkey
+from .indicator import LoadingIndicator
 
 _ICONS = {
     STATUS_IDLE: "◉",
@@ -52,6 +53,7 @@ class WisprTray(rumps.App):
         self._engine = engine
         self._history = history
         self._tasks: queue.Queue[Callable[[], None]] = queue.Queue()
+        self._indicator = LoadingIndicator()
 
         # Engine-Callbacks ins Tray weiterleiten.
         engine._on_status = self._on_engine_status  # type: ignore[attr-defined]
@@ -88,7 +90,7 @@ class WisprTray(rumps.App):
 
     def _on_engine_status(self, status: str) -> None:
         icon = _ICONS.get(status, "◉")
-        self._tasks.put(lambda: self._set_title(icon))
+        self._tasks.put(lambda s=status, i=icon: self._apply_status(s, i))
 
     def _on_engine_history(self) -> None:
         self._tasks.put(self._build_history_menu)
@@ -109,12 +111,22 @@ class WisprTray(rumps.App):
     def _set_title(self, title: str) -> None:
         self.title = title
 
+    def _apply_status(self, status: str, icon: str) -> None:
+        # Läuft im Main-Thread (rumps-Pump) — daher dürfen wir hier
+        # gefahrlos Cocoa-Aufrufe machen.
+        self._set_title(icon)
+        if status == STATUS_TRANSCRIBING:
+            self._indicator.show()
+        else:
+            self._indicator.hide()
+
     def _toggle_pause(self, item: rumps.MenuItem) -> None:
         new_state = not self._engine.paused
         self._engine.set_paused(new_state)
         self._hotkey.enabled = not new_state
         item.title = "Fortsetzen" if new_state else "Pause"
         self._set_title("⏸" if new_state else "◉")
+        self._indicator.hide()
 
     def _build_history_menu(self) -> None:
         # clear() schlägt fehl, wenn das Submenu noch nicht ans Hauptmenü
