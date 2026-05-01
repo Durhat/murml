@@ -15,7 +15,7 @@ OpenAI). Verlauf der letzten Transkriptionen lokal in der Menüleiste abrufbar.
 ## Installation
 
 ```bash
-git clone https://github.com/<user>/murml.git
+git clone https://github.com/Durhat/murml.git
 cd murml
 ./run.sh
 ```
@@ -24,10 +24,28 @@ cd murml
 startet murml. Beim ersten Lauf wird einmalig das Whisper-Modell geladen
 (Default `small`, ca. 460 MB).
 
+## Als App betreiben (ohne Terminal)
+
+```bash
+./build_app.sh
+cp -R dist/murml.app /Applications/
+```
+
+Das Build-Skript erzeugt ein schlankes Bundle, das beim Doppelklick `run.sh`
+im Hintergrund startet. murml erscheint anschließend nur als Symbol in der
+Menüleiste — kein Dock-Icon, kein Terminal.
+
+Damit murml automatisch beim Login startet:
+**Systemeinstellungen → Allgemein → Anmeldeobjekte → +** → `murml.app` wählen.
+
+Logs landen unter `~/Library/Logs/murml.log`. Beim ersten Start sind die
+gleichen Berechtigungen wie beim Terminal-Modus zu erteilen — aber dieses
+Mal für `murml.app`.
+
 ## Berechtigungen
 
 In **Systemeinstellungen → Datenschutz & Sicherheit** muss der Prozess, der
-`run.sh` startet (Terminal.app, iTerm, …), folgende Rechte haben:
+murml startet (`murml.app`, Terminal.app, iTerm, …), folgende Rechte haben:
 
 - **Eingabeüberwachung** — globaler Hotkey
 - **Bedienungshilfen** — Cmd+V senden, Emoji-Picker öffnen
