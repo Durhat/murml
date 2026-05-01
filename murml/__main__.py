@@ -61,6 +61,12 @@ def main() -> int:
     print(f"   Hotkey  : {hotkey_mode}")
     print("─" * 60)
 
+    # FRÜHE Notification: das lokale Whisper-Modell zu laden kann beim ersten
+    # Mal eine ganze Weile dauern (Download). Damit der User zwischen "App
+    # läuft schon" und "App hängt" unterscheiden kann, melden wir uns vorher.
+    if backend == "local":
+        instance.starting()
+
     try:
         transcribe = build_transcriber(backend, model_size=model_size, language=language)
     except Exception as e:
@@ -89,12 +95,21 @@ def main() -> int:
         )
 
     print("Bereit. Symbol erscheint oben in der Menüleiste.\n")
-    instance.welcome()
+    instance.ready()
 
     try:
         WisprTray(engine, history, hotkey_mode).run()
     except KeyboardInterrupt:
         print("\nBeendet.")
+    except RuntimeError as e:
+        # Häufigster Grund: CGEventTap ließ sich nicht erstellen (fehlende
+        # Eingabeüberwachung/Bedienungshilfen). Dem User Bescheid sagen,
+        # statt im Hintergrund zu sterben.
+        msg = str(e)
+        print(f"[fatal] {msg}")
+        if "Tap" in msg or "Eingabe" in msg or "Bedienungs" in msg:
+            instance.permissions_missing()
+        return 1
     except Exception as e:
         print(f"[fatal] Tray: {e}")
         return 1

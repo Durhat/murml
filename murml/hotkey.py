@@ -91,8 +91,21 @@ class FnHotkey:
         return event
 
     def _poll(self, timer, info) -> None:
-        # Watchdog: holt nur ein VERLORENES Release nach. Niemals Press –
-        # sonst würden FN-Kombinationen (Pfeiltasten etc.) eine Aufnahme starten.
+        # Sicherheitsnetz 1: macOS deaktiviert den CGEventTap regelmäßig
+        # (z. B. nach Permission-Popups, Screen-Recording-Dialogen, oder bei
+        # längerer User-Eingabe). Wir prüfen jeden Tick und aktivieren ihn
+        # gegebenenfalls wieder. Ohne das hängt FN nach jedem solchen Dialog.
+        if self._tap is not None:
+            try:
+                if not Quartz.CGEventTapIsEnabled(self._tap):
+                    Quartz.CGEventTapEnable(self._tap, True)
+                    print("[hotkey] Tap proaktiv reaktiviert (war disabled).")
+            except Exception:
+                pass
+
+        # Sicherheitsnetz 2: holt ein verlorenes RELEASE-Event nach. Niemals
+        # ein Press — sonst würden FN-Kombinationen (Pfeiltasten etc.) eine
+        # Aufnahme starten.
         if not self._fn_down:
             return
         try:

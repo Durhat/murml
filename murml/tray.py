@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import queue
 import subprocess
-from typing import Callable
+from pathlib import Path
+from typing import Callable, Optional
 
 import Quartz
 import pyperclip
@@ -27,12 +28,12 @@ from .history import History
 from .hotkey import build_hotkey
 from .indicator import LoadingIndicator
 
-_ICONS = {
-    STATUS_IDLE: "◉",
-    STATUS_ARMED: "◉",
-    STATUS_RECORDING: "● rec",
-    STATUS_TRANSCRIBING: "… stt",
-}
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_TRAY_ICON_PATH = _REPO_ROOT / "assets" / "tray-icon.png"
+
+
+def _icon_path() -> Optional[str]:
+    return str(_TRAY_ICON_PATH) if _TRAY_ICON_PATH.exists() else None
 
 _MAX_HISTORY_LABEL = 60  # Zeichen für die Menü-Anzeige eines Eintrags
 
@@ -49,7 +50,14 @@ class WisprTray(rumps.App):
         history: History,
         hotkey_mode: str,
     ) -> None:
-        super().__init__("◉", quit_button=None)
+        # Wir nutzen ein Template-Image (assets/tray-icon.png), das macOS
+        # automatisch an Hell/Dunkel-Modus anpasst. Fallback: Unicode-Symbol,
+        # falls das PNG fehlt.
+        icon = _icon_path()
+        if icon is not None:
+            super().__init__("", icon=icon, template=True, quit_button=None)
+        else:
+            super().__init__("◉", quit_button=None)
         self._engine = engine
         self._history = history
         self._tasks: queue.Queue[Callable[[], None]] = queue.Queue()
@@ -89,8 +97,8 @@ class WisprTray(rumps.App):
     # ── Engine→UI (laufen in beliebigen Threads, daher: Queue) ────────
 
     def _on_engine_status(self, status: str) -> None:
-        icon = _ICONS.get(status, "◉")
-        self._tasks.put(lambda s=status, i=icon: self._apply_status(s, i))
+        # Title bleibt leer — das Icon zeigt die App, der Indicator den Status.
+        self._tasks.put(lambda s=status: self._apply_status(s, ""))
 
     def _on_engine_history(self) -> None:
         self._tasks.put(self._build_history_menu)
@@ -111,10 +119,9 @@ class WisprTray(rumps.App):
     def _set_title(self, title: str) -> None:
         self.title = title
 
-    def _apply_status(self, status: str, icon: str) -> None:
+    def _apply_status(self, status: str, _label: str) -> None:
         # Läuft im Main-Thread (rumps-Pump) — daher dürfen wir hier
         # gefahrlos Cocoa-Aufrufe machen.
-        self._set_title(icon)
         if status == STATUS_RECORDING:
             self._indicator.show("recording")
         elif status == STATUS_TRANSCRIBING:
@@ -127,7 +134,8 @@ class WisprTray(rumps.App):
         self._engine.set_paused(new_state)
         self._hotkey.enabled = not new_state
         item.title = "Fortsetzen" if new_state else "Pause"
-        self._set_title("⏸" if new_state else "◉")
+        # Title nutzen wir nur als kleines "Pause"-Hint neben dem Icon.
+        self._set_title("⏸" if new_state else "")
         self._indicator.hide()
 
     def _build_history_menu(self) -> None:
