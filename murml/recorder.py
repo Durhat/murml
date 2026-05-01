@@ -37,8 +37,17 @@ class Recorder:
         )
         self._stream.start()
 
-    def stop(self) -> Optional[str]:
-        """Beendet die Aufnahme und gibt den Pfad zur WAV-Datei zurück."""
+    def stop(
+        self,
+        min_seconds: float = 0.35,
+        min_rms: float = 80.0,
+    ) -> Optional[str]:
+        """Beendet die Aufnahme und gibt den Pfad zur WAV-Datei zurück.
+
+        Aufnahmen, die kürzer als ``min_seconds`` sind oder im Schnitt unter
+        ``min_rms`` liegen (also Stille), werden verworfen — das verhindert
+        Whisper-Halluzinationen bei versehentlichem FN-Antippen.
+        """
         if self._stream is None:
             return None
         self._stream.stop()
@@ -54,7 +63,18 @@ class Recorder:
         if data.size == 0:
             return None
 
-        tmp = tempfile.NamedTemporaryFile(prefix="wispr_", suffix=".wav", delete=False)
+        duration = data.shape[0] / float(self.sample_rate)
+        if duration < min_seconds:
+            print(f"[recorder] zu kurz ({duration:.2f}s) — verworfen")
+            return None
+
+        # int16-RMS: Stille liegt typisch unter 50, leises Sprechen ab ~150.
+        rms = float(np.sqrt(np.mean(data.astype(np.float32) ** 2)))
+        if rms < min_rms:
+            print(f"[recorder] zu leise (rms={rms:.0f}) — verworfen")
+            return None
+
+        tmp = tempfile.NamedTemporaryFile(prefix="murml_", suffix=".wav", delete=False)
         tmp.close()
         with wave.open(tmp.name, "wb") as wf:
             wf.setnchannels(self.channels)

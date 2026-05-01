@@ -115,8 +115,10 @@ class WisprTray(rumps.App):
         # Läuft im Main-Thread (rumps-Pump) — daher dürfen wir hier
         # gefahrlos Cocoa-Aufrufe machen.
         self._set_title(icon)
-        if status == STATUS_TRANSCRIBING:
-            self._indicator.show()
+        if status == STATUS_RECORDING:
+            self._indicator.show("recording")
+        elif status == STATUS_TRANSCRIBING:
+            self._indicator.show("transcribing")
         else:
             self._indicator.hide()
 

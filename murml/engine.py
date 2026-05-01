@@ -7,6 +7,7 @@ Klasse über einen schmalen Listener, das CLI ebenso.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import threading
 import time
@@ -22,6 +23,29 @@ STATUS_IDLE = "idle"
 STATUS_ARMED = "armed"        # Press registriert, noch nicht entschieden
 STATUS_RECORDING = "recording"
 STATUS_TRANSCRIBING = "transcribing"
+
+
+# Whisper neigt bei Stille zu Halluzinationen aus seinem Trainingsmaterial:
+# Untertitel-Disclaimer, Werbe-Floskeln, „Vielen Dank fürs Zuschauen". Wenn
+# die komplette Ausgabe nur aus solchen Schnipseln besteht, werfen wir sie weg.
+_HALLUCINATION_PATTERNS = (
+    re.compile(r"untertitel.{0,40}(zdf|ard|wdr|funk|ndr|rundfunk|stephanie geiges)", re.I),
+    re.compile(r"untertitelung.{0,40}(zdf|ard|wdr|funk|ndr|rundfunk)", re.I),
+    re.compile(r"vielen dank f.{1,3}r.{0,4}(zuschauen|zusehen|zuh.ren|hinschauen)", re.I),
+    re.compile(r"copyright.{0,5}\d{4}", re.I),
+    re.compile(r"^\s*[\.\!\?\,]+\s*$"),
+    re.compile(r"^\s*(thanks?|thank you)\s+for\s+watching\.?\s*$", re.I),
+    re.compile(r"^\s*(\.|,|untertitel.*)$", re.I),
+)
+
+
+def _is_hallucination(text: str) -> bool:
+    if not text:
+        return True
+    stripped = text.strip()
+    if len(stripped) < 2:
+        return True
+    return any(p.search(stripped) for p in _HALLUCINATION_PATTERNS)
 
 
 def _open_emoji_picker() -> None:
@@ -105,9 +129,13 @@ class Engine:
             phase = self._phase
             arm_timer = self._arm_timer
             max_timer = self._max_timer
-            self._phase = STATUS_IDLE
             self._arm_timer = None
             self._max_timer = None
+            # ARMED → tap, sofort idle.
+            # RECORDING → erst nach recorder.stop() entscheiden, ob TRANSCRIBING
+            # (es gibt Audio) oder IDLE (zu kurz/leise).
+            if phase == STATUS_ARMED:
+                self._phase = STATUS_IDLE
 
         if arm_timer is not None:
             arm_timer.cancel()
@@ -128,10 +156,24 @@ class Engine:
             except Exception as e:
                 print(f"[recorder] Stop-Fehler: {e}")
                 audio_path = None
+
+            if audio_path is None:
+                # Nichts zu transkribieren → keinen Worker starten,
+                # Phase direkt zurück nach IDLE.
+                with self._lock:
+                    self._phase = STATUS_IDLE
+                self._on_status(STATUS_IDLE)
+                return
+
+            with self._lock:
+                self._phase = STATUS_TRANSCRIBING
             self._on_status(STATUS_TRANSCRIBING)
             threading.Thread(
                 target=self._process, args=(audio_path,), daemon=True
             ).start()
+            return
+
+        # phase ∈ {IDLE, TRANSCRIBING}: verirrtes release, ignorieren.
 
     # ── interne Hilfsmethoden ─────────────────────────────────────────
 
@@ -192,17 +234,17 @@ class Engine:
             pass
         self._on_status(STATUS_IDLE)
 
-    def _process(self, audio_path: Optional[str]) -> None:
+    def _process(self, audio_path: str) -> None:
         try:
-            if not audio_path:
-                print("[!] Keine Audiodaten aufgenommen.")
-                return
             try:
                 print("… transkribiere")
                 text = self._transcribe(audio_path)
                 text = (text or "").strip()
                 if not text:
                     print("[!] Keine Sprache erkannt.")
+                    return
+                if _is_hallucination(text):
+                    print(f"[!] Halluzination unterdrückt: {text!r}")
                     return
                 print(f"✓ {text}")
                 paste_text(text)
@@ -213,10 +255,11 @@ class Engine:
                 sounds.error()
                 print(f"[x] Fehler bei Transkription: {e}")
             finally:
-                if audio_path:
-                    try:
-                        os.unlink(audio_path)
-                    except Exception:
-                        pass
+                try:
+                    os.unlink(audio_path)
+                except Exception:
+                    pass
         finally:
+            with self._lock:
+                self._phase = STATUS_IDLE
             self._on_status(STATUS_IDLE)
