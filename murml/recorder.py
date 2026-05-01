@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import threading
+import os
 import wave
 from typing import Optional
 
@@ -36,6 +37,46 @@ class Recorder:
             callback=self._callback,
         )
         self._stream.start()
+
+    def warmup_mic(self) -> None:
+        """Öffnet kurz das Mikrofon, damit macOS den TCC-Dialog möglichst früh
+        zeigt — statt mitten während der ersten Aufnahme.
+
+        Läuft idealerweise aus einem Hintergrund-Thread (nicht Main-Thread).
+        """
+        try:
+            self.start()
+        except Exception as e:
+            print(f"[recorder] Mic-Warmup start: {e}")
+            raise
+        try:
+            path = self.stop(min_seconds=0.0, min_rms=0.0)
+        except Exception as e:
+            print(f"[recorder] Mic-Warmup stop: {e}")
+            try:
+                self._abort_stream()
+            except Exception:
+                pass
+            raise
+        if path:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+
+    def _abort_stream(self) -> None:
+        if self._stream is not None:
+            try:
+                self._stream.stop()
+            except Exception:
+                pass
+            try:
+                self._stream.close()
+            except Exception:
+                pass
+            self._stream = None
+        with self._lock:
+            self._frames = []
 
     def stop(
         self,

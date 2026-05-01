@@ -10,6 +10,7 @@ from __future__ import annotations
 import atexit
 import os
 import sys
+import threading
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -61,23 +62,15 @@ def main() -> int:
     print(f"   Hotkey  : {hotkey_mode}")
     print("─" * 60)
 
-    # FRÜHE Notification: das lokale Whisper-Modell zu laden kann beim ersten
-    # Mal eine ganze Weile dauern (Download). Damit der User zwischen "App
-    # läuft schon" und "App hängt" unterscheiden kann, melden wir uns vorher.
-    if backend == "local":
-        instance.starting()
-
-    try:
-        transcribe = build_transcriber(backend, model_size=model_size, language=language)
-    except Exception as e:
-        print(f"[fatal] Transkriber konnte nicht gestartet werden: {e}")
-        return 1
-
     recorder = Recorder(sample_rate=sample_rate)
     history = History(max_items=history_max)
 
+    def transcribe_not_ready(path: str) -> str:
+        print("[!] Modell lädt noch — bitte ein paar Sekunden warten.")
+        return ""
+
     engine = Engine(
-        transcribe=transcribe,
+        transcribe=transcribe_not_ready,
         recorder=recorder,
         history=history,
         tap_threshold=tap_threshold,
@@ -94,22 +87,48 @@ def main() -> int:
             "  • halten          → Push-to-Talk\n"
         )
 
-    print("Bereit. Symbol erscheint oben in der Menüleiste.\n")
-    instance.ready()
+    print("Starte Menüleisten-App (Modell/Mikrofon werden im Hintergrund vorbereitet)…\n")
 
     try:
-        WisprTray(engine, history, hotkey_mode).run()
-    except KeyboardInterrupt:
-        print("\nBeendet.")
+        tray = WisprTray(engine, history, hotkey_mode, hotkey_starts_enabled=False)
     except RuntimeError as e:
-        # Häufigster Grund: CGEventTap ließ sich nicht erstellen (fehlende
-        # Eingabeüberwachung/Bedienungshilfen). Dem User Bescheid sagen,
-        # statt im Hintergrund zu sterben.
         msg = str(e)
         print(f"[fatal] {msg}")
         if "Tap" in msg or "Eingabe" in msg or "Bedienungs" in msg:
             instance.permissions_missing()
         return 1
+
+    def background_bootstrap() -> None:
+        try:
+            if backend == "local":
+                instance.starting()
+            transcribe = build_transcriber(
+                backend, model_size=model_size, language=language
+            )
+            engine._transcribe = transcribe  # type: ignore[method-assign]
+            try:
+                recorder.warmup_mic()
+            except Exception as e:
+                print(f"[recorder] Mic-Warmup: {e}")
+                instance.microphone_missing()
+            tray.set_hotkey_enabled(True)
+            instance.ready()
+        except Exception as e:
+            print(f"[fatal] Start fehlgeschlagen: {e}")
+            instance.notify(
+                "murml",
+                "Start fehlgeschlagen",
+                str(e)[:120],
+            )
+
+    threading.Thread(
+        target=background_bootstrap, daemon=True, name="murml-bootstrap"
+    ).start()
+
+    try:
+        tray.run()
+    except KeyboardInterrupt:
+        print("\nBeendet.")
     except Exception as e:
         print(f"[fatal] Tray: {e}")
         return 1

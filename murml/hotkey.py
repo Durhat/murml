@@ -9,7 +9,9 @@ Beide Modi liefern push-to-talk: on_press beim Drücken, on_release beim Loslass
 
 from __future__ import annotations
 
+import queue
 import signal
+import threading
 from typing import Callable
 
 import Quartz
@@ -232,8 +234,40 @@ def _install_runloop_interrupt(run_loop) -> None:
 
 def build_hotkey(mode: str, on_press: Callback, on_release: Callback):
     mode = (mode or "fn").lower()
+
+    # Alle Hotkey-Callbacks laufen durch eine eigene Worker-Queue. Der
+    # CGEventTap-Callback kommt auf dem Main-RunLoop — würden wir dort
+    # ``recorder.stop()`` oder ``transcribe()`` ausführen, friert die Menü-
+    # leisten-App ein (Indicator bleibt stehen, Menü öffnet nicht, FN reagiert
+    # nicht mehr). Stattdessen: sofort zurück zum System, echte Arbeit im
+    # Hintergrund-Thread.
+    q: queue.Queue[Callback] = queue.Queue(maxsize=256)
+
+    def _worker() -> None:
+        while True:
+            fn = q.get()
+            if fn is None:
+                break
+            try:
+                fn()
+            except Exception as e:  # pragma: no cover
+                print(f"[hotkey-worker] {e}")
+            finally:
+                q.task_done()
+
+    threading.Thread(target=_worker, daemon=True, name="murml-hotkey").start()
+
+    def _schedule(fn: Callback) -> None:
+        try:
+            q.put_nowait(fn)
+        except queue.Full:
+            print("[hotkey-worker] Warteschlange voll — Ereignis verworfen.")
+
+    wrapped_press = lambda: _schedule(on_press)
+    wrapped_release = lambda: _schedule(on_release)
+
     if mode == "fn":
-        return FnHotkey(on_press, on_release)
+        return FnHotkey(wrapped_press, wrapped_release)
     if mode in {"ralt", "right_option", "alt_r"}:
-        return RightOptionHotkey(on_press, on_release)
+        return RightOptionHotkey(wrapped_press, wrapped_release)
     raise ValueError(f"Unbekannter Hotkey-Modus: {mode!r}")

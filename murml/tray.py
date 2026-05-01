@@ -49,19 +49,22 @@ class WisprTray(rumps.App):
         engine: Engine,
         history: History,
         hotkey_mode: str,
+        hotkey_starts_enabled: bool = True,
     ) -> None:
-        # Wir nutzen ein Template-Image (assets/tray-icon.png), das macOS
-        # automatisch an Hell/Dunkel-Modus anpasst. Fallback: Unicode-Symbol,
-        # falls das PNG fehlt.
+        # Template-Image (assets/tray-icon.png): passt sich Hell/Dunkel an.
+        # „Figure space“ (U+2007): minimale Breite fürs Klick-Ziel neben dem
+        # Icon — reiner Leerstring kann unter macOS das Aufklappen des Menüs
+        # verhindern.
         icon = _icon_path()
         if icon is not None:
-            super().__init__("", icon=icon, template=True, quit_button=None)
+            super().__init__("\u2007", icon=icon, template=True, quit_button=None)
         else:
             super().__init__("◉", quit_button=None)
         self._engine = engine
         self._history = history
         self._tasks: queue.Queue[Callable[[], None]] = queue.Queue()
         self._indicator = LoadingIndicator()
+        self._bootstrap_done = hotkey_starts_enabled
 
         # Engine-Callbacks ins Tray weiterleiten.
         engine._on_status = self._on_engine_status  # type: ignore[attr-defined]
@@ -88,11 +91,17 @@ class WisprTray(rumps.App):
         self._hotkey = build_hotkey(
             hotkey_mode, on_press=engine.on_press, on_release=engine.on_release
         )
+        self._hotkey.enabled = hotkey_starts_enabled
         self._hotkey.attach(Quartz.CFRunLoopGetMain())
 
         # Main-Thread-Pump für UI-Updates aus Background-Threads.
         self._pump = rumps.Timer(self._drain_tasks, 0.15)
         self._pump.start()
+
+    def set_hotkey_enabled(self, enabled: bool) -> None:
+        """Wird vom Bootstrap-Thread aufgerufen, sobald das Modell bereit ist."""
+        self._bootstrap_done = bool(enabled)
+        self._hotkey.enabled = self._bootstrap_done and not self._engine.paused
 
     # ── Engine→UI (laufen in beliebigen Threads, daher: Queue) ────────
 
@@ -132,7 +141,7 @@ class WisprTray(rumps.App):
     def _toggle_pause(self, item: rumps.MenuItem) -> None:
         new_state = not self._engine.paused
         self._engine.set_paused(new_state)
-        self._hotkey.enabled = not new_state
+        self._hotkey.enabled = (not new_state) and self._bootstrap_done
         item.title = "Fortsetzen" if new_state else "Pause"
         # Title nutzen wir nur als kleines "Pause"-Hint neben dem Icon.
         self._set_title("⏸" if new_state else "")

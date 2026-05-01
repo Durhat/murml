@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <mask id="hole">
+      <rect width="1024" height="1024" fill="white"/>
+      <!-- Bean / kidney shaped highlight on upper-right, oriented diagonally -->
+      <path d="
+        M 705 250
+        C 790 270, 820 360, 760 410
+        C 720 445, 680 430, 660 400
+        C 645 378, 620 380, 605 360
+        C 580 325, 615 270, 670 252
+        C 682 248, 695 248, 705 250 Z"
+        fill="black"/>
+    </mask>
+  </defs>
+  <circle cx="512" cy="512" r="400" fill="white" mask="url(#hole)"/>
+</svg>
