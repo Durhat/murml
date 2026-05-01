@@ -7,12 +7,14 @@ Der erkannte Text wird in dein aktuell fokussiertes Textfeld eingefügt.
 
 from __future__ import annotations
 
+import atexit
 import os
 import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
+from . import instance
 from .engine import Engine
 from .history import History
 from .recorder import Recorder
@@ -31,6 +33,13 @@ def _load_env() -> None:
 
 def main() -> int:
     _load_env()
+
+    if not instance.acquire():
+        # Schon eine murml-Instanz aktiv – freundlich abmelden.
+        instance.already_running_notice()
+        print("[!] murml läuft bereits – beende mich.")
+        return 0
+    atexit.register(instance.release)
 
     backend = os.getenv("MURML_BACKEND", "local")
     model_size = os.getenv("MURML_MODEL", "small")
@@ -80,6 +89,7 @@ def main() -> int:
         )
 
     print("Bereit. Symbol erscheint oben in der Menüleiste.\n")
+    instance.welcome()
 
     try:
         WisprTray(engine, history, hotkey_mode).run()

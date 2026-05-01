@@ -99,12 +99,36 @@ ${ICONFILE_KEY}
 </plist>
 EOF
 
-# Launcher: ruft run.sh auf, schreibt Logs in ~/Library/Logs/murml.log
+# Launcher: kompiliert ein winziges C-Binary, das run.sh per posix_spawn
+# startet und am Leben bleibt. Damit ist das Bundle-Executable ein echter
+# Mach-O-Prozess (kein Skript), und macOS kann TCC-Berechtigungen sauber
+# der App-Identität zuordnen statt sie als "python3.11" zu labeln.
 mkdir -p "$LOG_DIR"
-cat > "$APP/Contents/MacOS/murml" <<EOF
+
+# run.sh schreibt selbst nicht ins Log — wir lassen die Shell das via
+# Wrapper-Stub umlenken, der dann run.sh exec'd.
+RUN_WRAPPER="$APP/Contents/Resources/run-wrapped.sh"
+cat > "$RUN_WRAPPER" <<EOF
 #!/usr/bin/env bash
 exec "$ROOT/run.sh" >> "$LOG_DIR/murml.log" 2>&1
 EOF
+chmod +x "$RUN_WRAPPER"
+
+LAUNCHER_C="$ROOT/launcher.c"
+if [ ! -f "$LAUNCHER_C" ]; then
+    echo "✗ launcher.c fehlt – kann das Bundle-Executable nicht bauen." >&2
+    exit 1
+fi
+
+# @@RUN_SH@@ im Quelltext durch den vollen Pfad zum Wrapper-Skript ersetzen.
+LAUNCHER_TMP="$(mktemp -t murml_launcher.XXXX).c"
+sed "s|@@RUN_SH@@|${RUN_WRAPPER}|g" "$LAUNCHER_C" > "$LAUNCHER_TMP"
+
+if ! cc -O2 -arch arm64 -arch x86_64 -o "$APP/Contents/MacOS/murml" "$LAUNCHER_TMP" 2>/dev/null; then
+    # Fallback: nur native arch.
+    cc -O2 -o "$APP/Contents/MacOS/murml" "$LAUNCHER_TMP"
+fi
+rm -f "$LAUNCHER_TMP"
 chmod +x "$APP/Contents/MacOS/murml"
 
 # Ad-hoc Code-Signing: macht das Öffnen auf neueren macOS-Versionen
