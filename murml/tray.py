@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 from typing import Callable, Optional
 
+from AppKit import NSImage
 import Quartz
 import pyperclip
 import rumps
@@ -30,6 +31,8 @@ from .indicator import LoadingIndicator
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TRAY_ICON_PATH = _REPO_ROOT / "assets" / "tray-icon.png"
+_TRAY_ICON_REC_PATH = _REPO_ROOT / "assets" / "tray-icon-rec.png"
+
 
 
 def _icon_path() -> Optional[str]:
@@ -129,14 +132,20 @@ class WisprTray(rumps.App):
         self.title = title
 
     def _apply_status(self, status: str, _label: str) -> None:
-        # Läuft im Main-Thread (rumps-Pump) — daher dürfen wir hier
-        # gefahrlos Cocoa-Aufrufe machen.
         if status == STATUS_RECORDING:
             self._indicator.show("recording")
+            if _TRAY_ICON_REC_PATH.exists():
+                image = NSImage.alloc().initWithContentsOfFile_(str(_TRAY_ICON_REC_PATH))
+                image.setTemplate_(False)
+                self._statusitem.button().setImage_(image)
         elif status == STATUS_TRANSCRIBING:
             self._indicator.show("transcribing")
         else:
             self._indicator.hide()
+            if _TRAY_ICON_PATH.exists():
+                image = NSImage.alloc().initWithContentsOfFile_(str(_TRAY_ICON_PATH))
+                image.setTemplate_(True)
+                self._statusitem.button().setImage_(image)
 
     def _toggle_pause(self, item: rumps.MenuItem) -> None:
         new_state = not self._engine.paused
@@ -169,12 +178,12 @@ class WisprTray(rumps.App):
                     callback=lambda _i, t=text: pyperclip.copy(t),
                 )
             )
-            sub.add(
-                rumps.MenuItem(
-                    "Erneut einfügen",
-                    callback=lambda _i, t=text: self._paste_again(t),
-                )
-            )
+            # sub.add(
+            #     rumps.MenuItem(
+            #         "Erneut einfügen",
+            #         callback=lambda _i, t=text: self._paste_again(t),
+            #     )
+            # )
             self._history_menu.add(sub)
 
     def _paste_again(self, text: str) -> None:

@@ -114,6 +114,7 @@ class Engine:
             return
         with self._lock:
             if self._phase != STATUS_IDLE:
+                sounds.error()
                 return
             self._phase = STATUS_ARMED
             self._press_id += 1
