@@ -8,8 +8,10 @@ rumps-Timer auf dem Main-Thread abarbeitet.
 
 from __future__ import annotations
 
+import math
 import queue
 import subprocess
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -20,19 +22,23 @@ import rumps
 
 from .engine import (
     Engine,
-    STATUS_IDLE,
-    STATUS_ARMED,
     STATUS_RECORDING,
     STATUS_TRANSCRIBING,
 )
 from .history import History
 from .hotkey import build_hotkey
 from .indicator import LoadingIndicator
+from .tray_spinner import transcribing_spinner_nsimage, transcribing_theta_at
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _TRAY_ICON_PATH = _REPO_ROOT / "assets" / "tray-icon.png"
 _TRAY_ICON_REC_PATH = _REPO_ROOT / "assets" / "tray-icon-rec.png"
 
+_REC_PULSE_PERIOD_S = 1.24
+_REC_PULSE_ALPHA_MIN = 0.52
+_REC_PULSE_ALPHA_MAX = 1.0
+_REC_PULSE_FPS = 24.0
+_TRANSC_SPIN_FPS = 24.0
 
 
 def _icon_path() -> Optional[str]:
@@ -60,7 +66,7 @@ class WisprTray(rumps.App):
         # verhindern.
         icon = _icon_path()
         if icon is not None:
-            super().__init__("\u2007", icon=icon, template=True, quit_button=None)
+            super().__init__("\u2007", icon=icon, template=False, quit_button=None)
         else:
             super().__init__("◉", quit_button=None)
         self._engine = engine
@@ -100,6 +106,14 @@ class WisprTray(rumps.App):
         # Main-Thread-Pump für UI-Updates aus Background-Threads.
         self._pump = rumps.Timer(self._drain_tasks, 0.15)
         self._pump.start()
+        self._rec_pulse_t0 = 0.0
+        self._recording_pulse = rumps.Timer(
+            self._recording_pulse_tick, 1.0 / _REC_PULSE_FPS
+        )
+        self._trans_spin_t0 = 0.0
+        self._transcribing_spin = rumps.Timer(
+            self._transcribing_spin_tick, 1.0 / _TRANSC_SPIN_FPS
+        )
 
     def set_hotkey_enabled(self, enabled: bool) -> None:
         """Wird vom Bootstrap-Thread aufgerufen, sobald das Modell bereit ist."""
@@ -109,7 +123,6 @@ class WisprTray(rumps.App):
     # ── Engine→UI (laufen in beliebigen Threads, daher: Queue) ────────
 
     def _on_engine_status(self, status: str) -> None:
-        # Title bleibt leer — das Icon zeigt die App, der Indicator den Status.
         self._tasks.put(lambda s=status: self._apply_status(s, ""))
 
     def _on_engine_history(self) -> None:
@@ -131,34 +144,119 @@ class WisprTray(rumps.App):
     def _set_title(self, title: str) -> None:
         self.title = title
 
+    def _set_status_bar_image(self, image: Optional[NSImage]) -> None:
+        """Nutzt denselben NSStatusItem wie rumps (Delegate ``_nsapp``)."""
+        nsapp = getattr(self, "_nsapp", None)
+        if nsapp is None or image is None:
+            return
+        item = nsapp.nsstatusitem
+        image.setSize_((20, 20))
+        item.setImage_(image)
+
+    def _status_bar_button(self):
+        nsapp = getattr(self, "_nsapp", None)
+        if nsapp is None:
+            return None
+        item = nsapp.nsstatusitem
+        if not hasattr(item, "button"):
+            return None
+        return item.button()
+
+    def _stop_recording_pulse(self) -> None:
+        if self._recording_pulse.is_alive():
+            self._recording_pulse.stop()
+        btn = self._status_bar_button()
+        if btn is not None:
+            btn.setAlphaValue_(1.0)
+
+    def _start_recording_pulse(self) -> None:
+        self._rec_pulse_t0 = time.monotonic()
+        btn = self._status_bar_button()
+        if btn is None:
+            return
+        btn.setAlphaValue_(_REC_PULSE_ALPHA_MAX)
+        if not self._recording_pulse.is_alive():
+            self._recording_pulse.start()
+
+    def _recording_pulse_tick(self, _timer: rumps.Timer) -> None:
+        if self._engine.status() != STATUS_RECORDING:
+            self._stop_recording_pulse()
+            return
+        btn = self._status_bar_button()
+        if btn is None:
+            return
+        phase = (time.monotonic() - self._rec_pulse_t0) / _REC_PULSE_PERIOD_S
+        w = 0.5 + 0.5 * math.sin(phase * math.tau)
+        alpha = _REC_PULSE_ALPHA_MIN + (_REC_PULSE_ALPHA_MAX - _REC_PULSE_ALPHA_MIN) * w
+        btn.setAlphaValue_(alpha)
+
+    def _stop_transcribing_spin(self) -> None:
+        if self._transcribing_spin.is_alive():
+            self._transcribing_spin.stop()
+
+    def _refresh_transcribing_tray_icon(self) -> None:
+        if self._engine.status() != STATUS_TRANSCRIBING:
+            return
+        elapsed = time.monotonic() - self._trans_spin_t0
+        theta = transcribing_theta_at(elapsed)
+        image = transcribing_spinner_nsimage(theta)
+        image.setTemplate_(True)
+        self._set_status_bar_image(image)
+
+    def _start_transcribing_spin(self) -> None:
+        self._trans_spin_t0 = time.monotonic()
+        btn = self._status_bar_button()
+        if btn is not None:
+            btn.setAlphaValue_(1.0)
+        self._refresh_transcribing_tray_icon()
+        if not self._transcribing_spin.is_alive():
+            self._transcribing_spin.start()
+
+    def _transcribing_spin_tick(self, _timer: rumps.Timer) -> None:
+        if self._engine.status() != STATUS_TRANSCRIBING:
+            self._stop_transcribing_spin()
+            return
+        self._refresh_transcribing_tray_icon()
+
     def _apply_status(self, status: str, _label: str) -> None:
         if status == STATUS_RECORDING:
+            self._stop_transcribing_spin()
             self._indicator.show("recording")
             if _TRAY_ICON_REC_PATH.exists():
-                image = NSImage.alloc().initWithContentsOfFile_(str(_TRAY_ICON_REC_PATH))
+                image = NSImage.alloc().initWithContentsOfFile_(
+                    str(_TRAY_ICON_REC_PATH)
+                )
+                if image is None:
+                    return
                 image.setTemplate_(False)
-                self._statusitem.button().setImage_(image)
+                self._set_status_bar_image(image)
+                self._start_recording_pulse()
         elif status == STATUS_TRANSCRIBING:
+            self._stop_recording_pulse()
             self._indicator.show("transcribing")
+            self._start_transcribing_spin()
         else:
+            self._stop_recording_pulse()
+            self._stop_transcribing_spin()
             self._indicator.hide()
             if _TRAY_ICON_PATH.exists():
-                image = NSImage.alloc().initWithContentsOfFile_(str(_TRAY_ICON_PATH))
+                image = NSImage.alloc().initWithContentsOfFile_(
+                    str(_TRAY_ICON_PATH)
+                )
+                if image is None:
+                    return
                 image.setTemplate_(True)
-                self._statusitem.button().setImage_(image)
+                self._set_status_bar_image(image)
 
     def _toggle_pause(self, item: rumps.MenuItem) -> None:
         new_state = not self._engine.paused
         self._engine.set_paused(new_state)
         self._hotkey.enabled = (not new_state) and self._bootstrap_done
         item.title = "Fortsetzen" if new_state else "Pause"
-        # Title nutzen wir nur als kleines "Pause"-Hint neben dem Icon.
         self._set_title("⏸" if new_state else "")
         self._indicator.hide()
 
     def _build_history_menu(self) -> None:
-        # clear() schlägt fehl, wenn das Submenu noch nicht ans Hauptmenü
-        # gemountet ist (NSMenu existiert dann noch nicht).
         try:
             self._history_menu.clear()
         except Exception:
@@ -178,16 +276,11 @@ class WisprTray(rumps.App):
                     callback=lambda _i, t=text: pyperclip.copy(t),
                 )
             )
-            # sub.add(
-            #     rumps.MenuItem(
-            #         "Erneut einfügen",
-            #         callback=lambda _i, t=text: self._paste_again(t),
-            #     )
-            # )
             self._history_menu.add(sub)
 
     def _paste_again(self, text: str) -> None:
         from .paster import paste_text
+
         paste_text(text)
 
     def _open_history_file(self, _sender: rumps.MenuItem) -> None:
