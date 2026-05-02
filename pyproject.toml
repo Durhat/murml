@@ -1,0 +1,29 @@
+[project]
+name = "murml"
+version = "0.1.0"
+description = "Push-to-talk dictation for macOS"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+    "faster-whisper>=1.0.0",
+    "numpy>=1.24",
+    "openai>=1.30.0",
+    "pillow>=10.0",
+    "pyobjc-framework-quartz>=10.0",
+    "pynput>=1.7.6",
+    "pyperclip>=1.8.2",
+    "python-dotenv>=1.0.0",
+    "rumps>=0.4.0",
+    "sounddevice>=0.4.6",
+]
+
+[project.scripts]
+murml = "murml.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["murml*"]

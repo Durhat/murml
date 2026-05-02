@@ -1,8 +1,8 @@
 /*
  * murml-Launcher
  *
- * Ein winziges Mach-O-Binary, das `run.sh` per posix_spawn startet, am Leben
- * bleibt und SIGINT/SIGTERM an den Subprocess weiterreicht.
+ * Ein winziges Mach-O-Binary, das ein Wrapper-Skript per posix_spawn startet,
+ * am Leben bleibt und SIGINT/SIGTERM an den Subprocess weiterreicht.
  *
  * Hintergrund: macOS bindet TCC-Berechtigungen (Mikrofon, Eingabeüberwachung,
  * Bedienungshilfen) an das Mach-O-Binary, das die TCC-API aufruft, oder an das
@@ -14,7 +14,7 @@
  * Bauen:
  *   cc -O2 -o murml launcher.c
  *
- * Im build_app.sh wird @@RUN_SH@@ durch den absoluten Pfad zu run.sh ersetzt.
+ * Im build_app.sh wird @@RUN_WRAPPER@@ durch den absoluten Pfad zum Wrapper ersetzt.
  */
 
 #include <errno.h>
@@ -28,7 +28,7 @@
 
 extern char **environ;
 
-#define RUN_SCRIPT "@@RUN_SH@@"
+#define RUN_SCRIPT "@@RUN_WRAPPER@@"
 
 static volatile pid_t g_child_pid = -1;
 
@@ -39,7 +39,7 @@ static void forward_signal(int sig) {
 }
 
 int main(int argc, char *argv[]) {
-    /* Argumente, die an run.sh übergeben werden (Subprocess sieht "run.sh"). */
+    /* Argumente, die an den Wrapper übergeben werden. */
     char *script_argv[] = { (char *)RUN_SCRIPT, NULL };
 
     pid_t child_pid;
