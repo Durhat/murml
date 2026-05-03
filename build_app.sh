@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Baut ein minimalistisches macOS-App-Bundle für murml.
 #
-# Das Bundle ist im Grunde ein Wrapper, der run.sh startet. Es ist klein,
+# Das Bundle ist im Grunde ein Wrapper, der `uv run murml` startet. Es ist klein,
 # läuft im Hintergrund (LSUIElement) und ist doppelklickbar.
 #
 # Aufruf:   ./build_app.sh
@@ -99,18 +99,28 @@ ${ICONFILE_KEY}
 </plist>
 EOF
 
-# Launcher: kompiliert ein winziges C-Binary, das run.sh per posix_spawn
+# Launcher: kompiliert ein winziges C-Binary, das ein Wrapper-Skript per posix_spawn
 # startet und am Leben bleibt. Damit ist das Bundle-Executable ein echter
 # Mach-O-Prozess (kein Skript), und macOS kann TCC-Berechtigungen sauber
 # der App-Identität zuordnen statt sie als "python3.11" zu labeln.
 mkdir -p "$LOG_DIR"
 
-# run.sh schreibt selbst nicht ins Log — wir lassen die Shell das via
-# Wrapper-Stub umlenken, der dann run.sh exec'd.
+# Der Wrapper setzt einen GUI-tauglichen PATH, wechselt ins Projekt und startet
+# murml über uv. Die Ausgabe landet im üblichen Log.
 RUN_WRAPPER="$APP/Contents/Resources/run-wrapped.sh"
 cat > "$RUN_WRAPPER" <<EOF
 #!/usr/bin/env bash
-exec "$ROOT/run.sh" >> "$LOG_DIR/murml.log" 2>&1
+set -euo pipefail
+
+export PATH="/opt/homebrew/bin:/usr/local/bin:\$HOME/.local/bin:\$PATH"
+cd "$ROOT"
+
+if ! command -v uv >/dev/null 2>&1; then
+    echo "murml: uv wurde nicht gefunden. Installiere uv oder setze PATH passend." >&2
+    exit 127
+fi
+
+exec uv run murml >> "$LOG_DIR/murml.log" 2>&1
 EOF
 chmod +x "$RUN_WRAPPER"
 
@@ -120,9 +130,9 @@ if [ ! -f "$LAUNCHER_C" ]; then
     exit 1
 fi
 
-# @@RUN_SH@@ im Quelltext durch den vollen Pfad zum Wrapper-Skript ersetzen.
+# @@RUN_WRAPPER@@ im Quelltext durch den vollen Pfad zum Wrapper-Skript ersetzen.
 LAUNCHER_TMP="$(mktemp -t murml_launcher.XXXX).c"
-sed "s|@@RUN_SH@@|${RUN_WRAPPER}|g" "$LAUNCHER_C" > "$LAUNCHER_TMP"
+sed "s|@@RUN_WRAPPER@@|${RUN_WRAPPER}|g" "$LAUNCHER_C" > "$LAUNCHER_TMP"
 
 if ! cc -O2 -arch arm64 -arch x86_64 -o "$APP/Contents/MacOS/murml" "$LAUNCHER_TMP" 2>/dev/null; then
     # Fallback: nur native arch.

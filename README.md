@@ -11,18 +11,19 @@ OpenAI). Verlauf der letzten Transkriptionen lokal in der Menüleiste abrufbar.
 
 - macOS (Apple Silicon empfohlen)
 - Python 3.10+
+- [uv](https://docs.astral.sh/uv/)
 
 ## Installation
 
 ```bash
 git clone https://github.com/Durhat/murml.git
 cd murml
-./run.sh
+uv run murml
 ```
 
-`run.sh` legt eine virtuelle Umgebung an, installiert die Abhängigkeiten und
-startet murml. Beim ersten Lauf wird einmalig das Whisper-Modell geladen
-(Default `small`, ca. 460 MB).
+`uv run murml` legt bei Bedarf eine virtuelle Umgebung an, installiert die
+Abhängigkeiten aus `pyproject.toml`/`uv.lock` und startet murml. Beim ersten
+Lauf wird einmalig das Whisper-Modell geladen (Default `small`, ca. 460 MB).
 
 ## Als App betreiben (ohne Terminal)
 
@@ -31,9 +32,9 @@ startet murml. Beim ersten Lauf wird einmalig das Whisper-Modell geladen
 cp -R dist/murml.app /Applications/
 ```
 
-Das Build-Skript erzeugt ein schlankes Bundle, das beim Doppelklick `run.sh`
-im Hintergrund startet. murml erscheint anschließend nur als Symbol in der
-Menüleiste — kein Dock-Icon, kein Terminal.
+Das Build-Skript erzeugt ein schlankes Bundle, das beim Doppelklick
+`uv run murml` im Hintergrund startet. murml erscheint anschließend nur als
+Symbol in der Menüleiste — kein Dock-Icon, kein Terminal.
 
 Damit murml automatisch beim Login startet:
 **Systemeinstellungen → Allgemein → Anmeldeobjekte → +** → `murml.app` wählen.
